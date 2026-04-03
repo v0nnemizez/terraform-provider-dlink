@@ -1,0 +1,12 @@
+# Terraform state
+terraform.tfstate
+terraform.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+
+# Test directory 
+test/
+
+# Build output
+dist/
+.claude/
