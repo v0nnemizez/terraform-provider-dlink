@@ -520,6 +520,68 @@ func (c *Client) SetWifiSettings(s *WifiSettings) error {
 	return err
 }
 
+// --- LAN Settings ---
+
+// LanSettings represents the router's LAN configuration.
+type LanSettings struct {
+	RouterIP   string
+	SubnetMask string
+	DHCPEnabled bool
+	MACAddress  string // read-only, set by router
+}
+
+// GetLanSettings returns the current LAN settings.
+// Returns (nil, nil) if the router returns an empty body.
+func (c *Client) GetLanSettings() (*LanSettings, error) {
+	respXML, err := c.GetAction("GetRouterLanSettings")
+	if err != nil {
+		return nil, err
+	}
+	if len(bytes.TrimSpace(respXML)) == 0 {
+		return nil, nil
+	}
+
+	var env struct {
+		Body struct {
+			Settings struct {
+				RouterIP    string `xml:"RouterIPAddress"`
+				SubnetMask  string `xml:"RouterSubnetMask"`
+				DHCPEnabled string `xml:"DHCPServerEnabled"`
+				MACAddress  string `xml:"RouterMACAddress"`
+			} `xml:"GetRouterLanSettingsResponse"`
+		} `xml:"Body"`
+	}
+	if err := xml.Unmarshal(respXML, &env); err != nil {
+		return nil, fmt.Errorf("parse LAN settings: %w (body: %s)", err, string(respXML))
+	}
+
+	s := env.Body.Settings
+	return &LanSettings{
+		RouterIP:    s.RouterIP,
+		SubnetMask:  s.SubnetMask,
+		DHCPEnabled: strings.EqualFold(s.DHCPEnabled, "true"),
+		MACAddress:  s.MACAddress,
+	}, nil
+}
+
+// SetLanSettings applies LAN configuration to the router.
+func (c *Client) SetLanSettings(s LanSettings) error {
+	dhcp := "false"
+	if s.DHCPEnabled {
+		dhcp = "true"
+	}
+	inner := fmt.Sprintf(
+		"<SetRouterLanSettings>"+
+			"<RouterIPAddress>%s</RouterIPAddress>"+
+			"<RouterSubnetMask>%s</RouterSubnetMask>"+
+			"<DHCPServerEnabled>%s</DHCPServerEnabled>"+
+			"</SetRouterLanSettings>",
+		s.RouterIP, s.SubnetMask, dhcp,
+	)
+	_, err := c.postRaw("SetRouterLanSettings", []byte(inner))
+	return err
+}
+
 // --- Port Forwarding ---
 
 // PortForwardRule represents a single port forwarding rule.
