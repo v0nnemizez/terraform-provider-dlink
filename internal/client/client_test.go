@@ -100,6 +100,12 @@ func TestLogin_Success(t *testing.T) {
 			}
 			call2Cookie = r.Header.Get("Cookie")
 			fmt.Fprint(w, soapWrap(`<LoginResponse><LoginResult>OK</LoginResult></LoginResponse>`))
+		case 3:
+			// detectFirmwareVersion — GetDeviceSettings
+			if action != "GetDeviceSettings" {
+				t.Errorf("call 3: expected API-ACTION=GetDeviceSettings, got %q", action)
+			}
+			fmt.Fprint(w, soapWrap(`<GetDeviceSettingsResponse><Version>0300</Version></GetDeviceSettingsResponse>`))
 		}
 	}))
 	defer ts.Close()
@@ -117,8 +123,11 @@ func TestLogin_Success(t *testing.T) {
 	if call2Cookie != "uid="+testCookie {
 		t.Errorf("expected Cookie header 'uid=%s' on login request, got %q", testCookie, call2Cookie)
 	}
-	if callCount != 2 {
-		t.Errorf("expected 2 HTTP calls, got %d", callCount)
+	if c.firmwareVersion != 300 {
+		t.Errorf("expected firmwareVersion=300, got %d", c.firmwareVersion)
+	}
+	if callCount != 3 {
+		t.Errorf("expected 3 HTTP calls, got %d", callCount)
 	}
 }
 

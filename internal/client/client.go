@@ -22,14 +22,15 @@ const withoutLoginKey = "withoutloginkey"
 
 // Client holds the HTTP client and session state for the D-Link DHMAPI SOAP API.
 type Client struct {
-	BaseURL    string
-	Username   string
-	password   string
-	httpClient *http.Client
-	privateKey string     // HMAC key for API-AUTH; set from Login.js PrivateKey = HMAC(PublicKey+pass, challenge)
-	uid        string     // uid cookie value; set from Cookie field in challenge response
-	pfMu       sync.Mutex // serialises Get+Set on the shared port-forwarding list
-	fwMu       sync.Mutex // serialises Get+Set on the shared firewall rule list
+	BaseURL         string
+	Username        string
+	password        string
+	httpClient      *http.Client
+	privateKey      string     // HMAC key for API-AUTH; set from Login.js PrivateKey = HMAC(PublicKey+pass, challenge)
+	uid             string     // uid cookie value; set from Cookie field in challenge response
+	firmwareVersion int        // parsed from GetDeviceSettings <Version> field (e.g. "0300" → 300); 0 = unknown/pre-detection
+	pfMu            sync.Mutex // serialises Get+Set on the shared port-forwarding list
+	fwMu            sync.Mutex // serialises Get+Set on the shared firewall rule list
 }
 
 // NewClient creates a new D-Link API client using the default /DHMAPI/ path.
@@ -94,11 +95,13 @@ func apiAuth(privateKey, action string) string {
 }
 
 // apiContent computes the API-CONTENT header per comm.js / SOAPAction.js.
-// For authenticated calls that are not Login or GetDeviceSettings, it returns
-// AES-256-CTR(MD5(body)) formatted as "CIPHERTEXT_HEX IV_HEX" (both uppercase).
-// Returns "null" for pre-login, Login, and GetDeviceSettings calls.
-func apiContent(body []byte, privateKey, action string) string {
-	if privateKey == withoutLoginKey || action == "Login" || action == "GetDeviceSettings" {
+// Encryption is only applied when firmwareVersion >= 300 (firmware 1.08.x and later).
+// Older firmware and pre-login calls always receive "null".
+func (c *Client) apiContent(body []byte, action string) string {
+	if c.privateKey == withoutLoginKey ||
+		action == "Login" ||
+		action == "GetDeviceSettings" ||
+		c.firmwareVersion < 300 {
 		return "null"
 	}
 
@@ -112,7 +115,7 @@ func apiContent(body []byte, privateKey, action string) string {
 	plaintext = append(plaintext, bytes.Repeat([]byte{byte(padLen)}, padLen)...)
 
 	// Decode PrivateKey (64 hex chars → 32 bytes AES-256 key)
-	key, err := hex.DecodeString(privateKey)
+	key, err := hex.DecodeString(c.privateKey)
 	if err != nil || len(key) != 32 {
 		return "null"
 	}
@@ -196,6 +199,39 @@ func (c *Client) Login() error {
 		return fmt.Errorf("login failed: %w", err)
 	}
 
+	// Detect firmware version so apiContent knows whether to encrypt.
+	if err := c.detectFirmwareVersion(); err != nil {
+		// Non-fatal: fall back to no encryption (safe for older firmware).
+		c.firmwareVersion = 0
+	}
+
+	return nil
+}
+
+// detectFirmwareVersion calls GetDeviceSettings and parses the <Version> field.
+// The router returns a zero-padded decimal string, e.g. "0300" → 300.
+func (c *Client) detectFirmwareVersion() error {
+	respXML, err := c.GetAction("GetDeviceSettings")
+	if err != nil {
+		return err
+	}
+
+	var env struct {
+		Body struct {
+			Settings struct {
+				Version string `xml:"Version"`
+			} `xml:"GetDeviceSettingsResponse"`
+		} `xml:"Body"`
+	}
+	if err := xml.Unmarshal(respXML, &env); err != nil {
+		return err
+	}
+
+	v := strings.TrimSpace(env.Body.Settings.Version)
+	if v == "" {
+		return nil
+	}
+	fmt.Sscanf(v, "%d", &c.firmwareVersion)
 	return nil
 }
 
@@ -302,7 +338,7 @@ func (c *Client) post(action string, body interface{}) ([]byte, error) {
 	req.Header.Set("Content-Type", "text/xml; charset=UTF-8")
 	req.Header.Set("API-ACTION", action)
 	req.Header.Set("API-AUTH", apiAuth(c.privateKey, action))
-	req.Header.Set("API-CONTENT", apiContent(payload, c.privateKey, action))
+	req.Header.Set("API-CONTENT", c.apiContent(payload, action))
 	if c.uid != "" {
 		req.Header.Set("Cookie", "uid="+c.uid)
 	}
