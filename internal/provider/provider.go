@@ -91,6 +91,8 @@ func (p *DLinkProvider) Resources(_ context.Context) []func() resource.Resource 
 		resources.NewParentalProfileResource,
 		resources.NewFirewallRuleResource,
 		resources.NewLanResource,
+		resources.NewNetworkSettingsResource,
+		resources.NewAdvNetworkSettingsResource,
 	}
 }
 

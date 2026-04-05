@@ -582,6 +582,166 @@ func (c *Client) SetLanSettings(s LanSettings) error {
 	return err
 }
 
+// --- Network Settings ---
+
+// NetworkSettings represents DHCP and LAN network configuration.
+type NetworkSettings struct {
+	IPAddress       string
+	SubnetMask      string
+	DeviceName      string
+	LocalDomainName string
+	IPRangeStart    int
+	IPRangeEnd      int
+	LeaseTime       int
+	Broadcast       bool
+	DNSRelay        bool
+	MACAddress      string // read-only
+}
+
+// GetNetworkSettings returns the current network/DHCP settings.
+func (c *Client) GetNetworkSettings() (*NetworkSettings, error) {
+	respXML, err := c.GetAction("GetNetworkSettings")
+	if err != nil {
+		return nil, err
+	}
+	if len(bytes.TrimSpace(respXML)) == 0 {
+		return nil, nil
+	}
+
+	var env struct {
+		Body struct {
+			S struct {
+				IPAddress       string `xml:"IPAddress"`
+				SubnetMask      string `xml:"SubnetMask"`
+				DeviceName      string `xml:"DeviceName"`
+				LocalDomainName string `xml:"LocalDomainName"`
+				IPRangeStart    int    `xml:"IPRangeStart"`
+				IPRangeEnd      int    `xml:"IPRangeEnd"`
+				LeaseTime       int    `xml:"LeaseTime"`
+				Broadcast       string `xml:"Broadcast"`
+				DNSRelay        string `xml:"DNSRelay"`
+				MACAddress      string `xml:"MacAddress"`
+			} `xml:"GetNetworkSettingsResponse"`
+		} `xml:"Body"`
+	}
+	if err := xml.Unmarshal(respXML, &env); err != nil {
+		return nil, fmt.Errorf("parse network settings: %w (body: %s)", err, string(respXML))
+	}
+
+	s := env.Body.S
+	return &NetworkSettings{
+		IPAddress:       s.IPAddress,
+		SubnetMask:      s.SubnetMask,
+		DeviceName:      s.DeviceName,
+		LocalDomainName: s.LocalDomainName,
+		IPRangeStart:    s.IPRangeStart,
+		IPRangeEnd:      s.IPRangeEnd,
+		LeaseTime:       s.LeaseTime,
+		Broadcast:       strings.EqualFold(s.Broadcast, "true"),
+		DNSRelay:        strings.EqualFold(s.DNSRelay, "true"),
+		MACAddress:      s.MACAddress,
+	}, nil
+}
+
+// SetNetworkSettings applies DHCP and LAN network configuration.
+func (c *Client) SetNetworkSettings(s NetworkSettings) error {
+	broadcast := "false"
+	if s.Broadcast {
+		broadcast = "true"
+	}
+	dnsRelay := "false"
+	if s.DNSRelay {
+		dnsRelay = "true"
+	}
+	inner := fmt.Sprintf(
+		"<SetNetworkSettings>"+
+			"<IPAddress>%s</IPAddress>"+
+			"<SubnetMask>%s</SubnetMask>"+
+			"<DeviceName>%s</DeviceName>"+
+			"<LocalDomainName>%s</LocalDomainName>"+
+			"<IPRangeStart>%d</IPRangeStart>"+
+			"<IPRangeEnd>%d</IPRangeEnd>"+
+			"<LeaseTime>%d</LeaseTime>"+
+			"<Broadcast>%s</Broadcast>"+
+			"<DNSRelay>%s</DNSRelay>"+
+			"</SetNetworkSettings>",
+		s.IPAddress, s.SubnetMask, s.DeviceName, s.LocalDomainName,
+		s.IPRangeStart, s.IPRangeEnd, s.LeaseTime, broadcast, dnsRelay,
+	)
+	_, err := c.postRaw("SetNetworkSettings", []byte(inner))
+	return err
+}
+
+// --- Advanced Network Settings ---
+
+// AdvNetworkSettings represents UPnP, multicast, and WAN port speed settings.
+type AdvNetworkSettings struct {
+	UPNP          bool
+	MulticastIPv4 bool
+	MulticastIPv6 bool
+	WANPortSpeed  string
+}
+
+// GetAdvNetworkSettings returns the current advanced network settings.
+func (c *Client) GetAdvNetworkSettings() (*AdvNetworkSettings, error) {
+	respXML, err := c.GetAction("GetAdvNetworkSettings")
+	if err != nil {
+		return nil, err
+	}
+	if len(bytes.TrimSpace(respXML)) == 0 {
+		return nil, nil
+	}
+
+	var env struct {
+		Body struct {
+			S struct {
+				UPNP          string `xml:"UPNP"`
+				MulticastIPv4 string `xml:"MulticastIPv4"`
+				MulticastIPv6 string `xml:"MulticastIPv6"`
+				WANPortSpeed  string `xml:"WANPortSpeed"`
+			} `xml:"GetAdvNetworkSettingsResponse"`
+		} `xml:"Body"`
+	}
+	if err := xml.Unmarshal(respXML, &env); err != nil {
+		return nil, fmt.Errorf("parse adv network settings: %w (body: %s)", err, string(respXML))
+	}
+
+	s := env.Body.S
+	return &AdvNetworkSettings{
+		UPNP:          strings.EqualFold(s.UPNP, "true"),
+		MulticastIPv4: strings.EqualFold(s.MulticastIPv4, "true"),
+		MulticastIPv6: strings.EqualFold(s.MulticastIPv6, "true"),
+		WANPortSpeed:  s.WANPortSpeed,
+	}, nil
+}
+
+// SetAdvNetworkSettings applies advanced network configuration.
+func (c *Client) SetAdvNetworkSettings(s AdvNetworkSettings) error {
+	upnp := "false"
+	if s.UPNP {
+		upnp = "true"
+	}
+	mcast4 := "false"
+	if s.MulticastIPv4 {
+		mcast4 = "true"
+	}
+	mcast6 := "false"
+	if s.MulticastIPv6 {
+		mcast6 = "true"
+	}
+	inner := fmt.Sprintf(
+		"<SetAdvNetworkSettings>"+
+			"<UPNP>%s</UPNP>"+
+			"<MulticastIPv4>%s</MulticastIPv4>"+
+			"<MulticastIPv6>%s</MulticastIPv6>"+
+			"<WANPortSpeed>%s</WANPortSpeed>"+
+			"</SetAdvNetworkSettings>",
+		upnp, mcast4, mcast6, s.WANPortSpeed,
+	)
+	_, err := c.postRaw("SetAdvNetworkSettings", []byte(inner))
+	return err
+}
+
 // --- Port Forwarding ---
 
 // PortForwardRule represents a single port forwarding rule.
