@@ -1126,6 +1126,119 @@ func (c *Client) ModifyFirewallRules(fn func([]FirewallRule) ([]FirewallRule, er
 	return c.SetFirewallRules(updated, firewallStatus)
 }
 
+// --- Quick VPN ---
+
+// QuickVPNSettings represents the D-Link QuickVPN (L2TP/IPsec) configuration.
+type QuickVPNSettings struct {
+	Enabled      bool
+	PSK          string // Pre-Shared Key
+	Username     string
+	Password     string
+	AuthProtocol string // e.g. "MSCHAPv2"
+	MPPE         string // e.g. "None"
+}
+
+// encryptField encrypts a plaintext field value using AES-256-CTR with the
+// session private key, matching the browser's AES256_CTR_Encrypt() in js_comm.js.
+// Returns the plaintext unchanged when no valid session key is available.
+func (c *Client) encryptField(plaintext string) string {
+	if c.privateKey == withoutLoginKey || c.firmwareVersion < 300 {
+		return plaintext
+	}
+	key, err := hex.DecodeString(c.privateKey)
+	if err != nil || len(key) != 32 {
+		return plaintext
+	}
+
+	data := []byte(plaintext)
+	padLen := 16 - (len(data) % 16)
+	data = append(data, bytes.Repeat([]byte{byte(padLen)}, padLen)...)
+
+	iv := make([]byte, 16)
+	if _, err := rand.Read(iv); err != nil {
+		return plaintext
+	}
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return plaintext
+	}
+	ciphertext := make([]byte, len(data))
+	cipher.NewCTR(block, iv).XORKeyStream(ciphertext, data)
+
+	return strings.ToUpper(hex.EncodeToString(ciphertext)) + " " + strings.ToUpper(hex.EncodeToString(iv))
+}
+
+// GetQuickVPNSettings returns the current QuickVPN configuration.
+// Note: Password and PSK are returned encrypted by the router and cannot be
+// compared to the plaintext values set via SetQuickVPNSettings.
+func (c *Client) GetQuickVPNSettings() (*QuickVPNSettings, error) {
+	respXML, err := c.GetAction("GetQuickVPNSettings")
+	if err != nil {
+		return nil, err
+	}
+	if len(bytes.TrimSpace(respXML)) == 0 {
+		return nil, nil
+	}
+
+	var env struct {
+		Body struct {
+			S struct {
+				Enabled      string `xml:"Enabled"`
+				PSK          string `xml:"PSK"`
+				Username     string `xml:"Username"`
+				Password     string `xml:"Password"`
+				AuthProtocol string `xml:"AuthProtocol"`
+				MPPE         string `xml:"MPPE"`
+			} `xml:"GetQuickVPNSettingsResponse"`
+		} `xml:"Body"`
+	}
+	if err := xml.Unmarshal(respXML, &env); err != nil {
+		return nil, fmt.Errorf("parse QuickVPN settings: %w (body: %s)", err, string(respXML))
+	}
+
+	s := env.Body.S
+	return &QuickVPNSettings{
+		Enabled:      strings.EqualFold(s.Enabled, "true"),
+		PSK:          s.PSK,
+		Username:     s.Username,
+		Password:     s.Password,
+		AuthProtocol: s.AuthProtocol,
+		MPPE:         s.MPPE,
+	}, nil
+}
+
+// SetQuickVPNSettings applies QuickVPN configuration to the router.
+// Password and PSK are encrypted with the session key before transmission,
+// matching the browser's AES256_CTR_Encrypt() behaviour.
+func (c *Client) SetQuickVPNSettings(s QuickVPNSettings) error {
+	enabled := "false"
+	if s.Enabled {
+		enabled = "true"
+	}
+	authProto := s.AuthProtocol
+	if authProto == "" {
+		authProto = "MSCHAPv2"
+	}
+	mppe := s.MPPE
+	if mppe == "" {
+		mppe = "None"
+	}
+	inner := fmt.Sprintf(
+		"<SetQuickVPNSettings>"+
+			"<Enabled>%s</Enabled>"+
+			"<Username>%s</Username>"+
+			"<Password>%s</Password>"+
+			"<PSK>%s</PSK>"+
+			"<AuthProtocol>%s</AuthProtocol>"+
+			"<MPPE>%s</MPPE>"+
+			"</SetQuickVPNSettings>",
+		enabled, s.Username, c.encryptField(s.Password), c.encryptField(s.PSK), authProto, mppe,
+	)
+	_, err := c.postRaw("SetQuickVPNSettings", []byte(inner))
+	return err
+}
+
 // SetPortForwardingRules replaces all port forwarding rules.
 func (c *Client) SetPortForwardingRules(rules []PortForwardRule) error {
 	var sb strings.Builder

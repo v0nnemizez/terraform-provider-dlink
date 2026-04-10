@@ -93,6 +93,7 @@ func (p *DLinkProvider) Resources(_ context.Context) []func() resource.Resource 
 		resources.NewLanResource,
 		resources.NewNetworkSettingsResource,
 		resources.NewAdvNetworkSettingsResource,
+		resources.NewQuickVPNResource,
 	}
 }
 
